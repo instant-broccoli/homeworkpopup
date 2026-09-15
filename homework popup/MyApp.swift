@@ -16,11 +16,8 @@ struct HomeworkAddon: App {
 }
 
 final class HomeworkPanelState: ObservableObject {
-    @Published var isOpen: Bool
-
-    init(isOpen: Bool = false) {
-        self.isOpen = isOpen
-    }
+    @Published var isOpen = false
+    @Published var isHandleVisible = false
 }
 
 final class FloatingPanel: NSPanel {
@@ -39,13 +36,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(
         _ notification: Notification
     ) {
+        NSApplication.shared.setActivationPolicy(.accessory)
+
         panelController = EdgePanelController()
         panelController?.show()
     }
 }
 
 final class EdgePanelController {
-    private let collapsedWidth: CGFloat = 48
+    private let buttonWidth: CGFloat = 48
     private let openWidth: CGFloat = 380
     private let panelHeight: CGFloat = 520
 
@@ -60,7 +59,7 @@ final class EdgePanelController {
             defer: false
         )
 
-        panel.level = .floating
+        panel.level = .screenSaver
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.hasShadow = true
@@ -69,7 +68,8 @@ final class EdgePanelController {
 
         panel.collectionBehavior = [
             .canJoinAllSpaces,
-            .fullScreenAuxiliary
+            .canJoinAllApplications,
+            .stationary
         ]
 
         panel.contentView = NSHostingView(
@@ -77,25 +77,49 @@ final class EdgePanelController {
                 state: state,
                 toggle: { [weak self] in
                     self?.togglePanel()
+                },
+                hoverChanged: { [weak self] hovering in
+                    self?.handleHover(hovering)
                 }
             )
         )
 
-        setPanelFrame(width: collapsedWidth)
+        panel.setFrame(
+            frame(width: buttonWidth),
+            display: true
+        )
     }
 
     func show() {
         panel.orderFrontRegardless()
     }
 
+    private func handleHover(_ hovering: Bool) {
+        guard !state.isOpen else {
+            return
+        }
+
+        state.isHandleVisible = hovering
+    }
+
     private func togglePanel() {
         state.isOpen.toggle()
 
-        let newWidth = state.isOpen
-            ? openWidth
-            : collapsedWidth
+        if state.isOpen {
+            state.isHandleVisible = true
+            animatePanel(to: openWidth)
 
-        let newFrame = frame(width: newWidth)
+            NSApplication.shared.activate(
+                ignoringOtherApps: true
+            )
+            panel.makeKey()
+        } else {
+            animatePanel(to: buttonWidth)
+        }
+    }
+
+    private func animatePanel(to width: CGFloat) {
+        let newFrame = frame(width: width)
 
         NSAnimationContext.runAnimationGroup { animation in
             animation.duration = 0.25
@@ -108,20 +132,6 @@ final class EdgePanelController {
                 display: true
             )
         }
-
-        if state.isOpen {
-            NSApplication.shared.activate(
-                ignoringOtherApps: true
-            )
-            panel.makeKey()
-        }
-    }
-
-    private func setPanelFrame(width: CGFloat) {
-        panel.setFrame(
-            frame(width: width),
-            display: true
-        )
     }
 
     private func frame(width: CGFloat) -> NSRect {
@@ -144,7 +154,9 @@ final class EdgePanelController {
 
 struct EdgePanelView: View {
     @ObservedObject var state: HomeworkPanelState
+
     let toggle: () -> Void
+    let hoverChanged: (Bool) -> Void
 
     var body: some View {
         HStack(spacing: 0) {
@@ -166,6 +178,20 @@ struct EdgePanelView: View {
                     )
                 }
                 .buttonStyle(.plain)
+                .opacity(
+                    state.isOpen || state.isHandleVisible
+                        ? 1
+                        : 0
+                )
+                .offset(
+                    x: state.isOpen || state.isHandleVisible
+                        ? 0
+                        : 48
+                )
+                .animation(
+                    .easeInOut(duration: 0.2),
+                    value: state.isHandleVisible
+                )
 
                 Spacer()
             }
@@ -179,11 +205,19 @@ struct EdgePanelView: View {
                     )
             }
         }
+        .frame(
+            maxWidth: .infinity,
+            maxHeight: .infinity,
+            alignment: .leading
+        )
         .clipShape(
             UnevenRoundedRectangle(
                 topLeadingRadius: 16,
                 bottomLeadingRadius: 16
             )
         )
+        .onHover { hovering in
+            hoverChanged(hovering)
+        }
     }
 }
